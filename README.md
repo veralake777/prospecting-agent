@@ -27,6 +27,10 @@ python -m prospect_agent.main run-daily --target 1000
    ```bash
    pip install -e .
    ```
+   Or with requirements file:
+   ```bash
+   pip install -r requirements.txt
+   ```
 2. **Configure environment**
    ```bash
    cp .env.example .env

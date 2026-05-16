@@ -4,7 +4,6 @@ import argparse
 from datetime import datetime
 from uuid import uuid4
 
-from apscheduler.schedulers.blocking import BlockingScheduler
 from fastapi import FastAPI
 
 from prospect_agent.config import Settings
@@ -32,6 +31,13 @@ def _enforce_free_mode() -> None:
 
 
 def _schedule_daily() -> None:
+    try:
+        from apscheduler.schedulers.blocking import BlockingScheduler
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Missing dependency 'apscheduler'. Install project dependencies (e.g., `pip install -e .`) "
+            "or `pip install apscheduler` before using schedule-daily."
+        ) from exc
     hour, minute = settings.run_time_local.split(":")
     scheduler = BlockingScheduler(timezone=settings.run_timezone)
     scheduler.add_job(lambda: run_daily(settings.daily_target_leads, storage), "cron", hour=int(hour), minute=int(minute), id="run_daily")
