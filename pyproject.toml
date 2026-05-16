@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prospect-agent"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi",
+  "httpx",
+  "beautifulsoup4",
+  "pydantic>=2",
+  "pydantic-settings",
+  "tldextract",
+  "pandas",
+  "apscheduler",
+  "google-api-python-client",
+  "google-auth",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
