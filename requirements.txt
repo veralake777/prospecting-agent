@@ -1,0 +1,11 @@
+fastapi
+httpx
+beautifulsoup4
+pydantic>=2
+pydantic-settings
+tldextract
+pandas
+apscheduler
+google-api-python-client
+google-auth
+pytest
