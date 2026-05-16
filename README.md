@@ -22,6 +22,46 @@ python -m prospect_agent.main init-sheets
 python -m prospect_agent.main run-daily --target 1000
 ```
 
+## How to use this project (quickstart)
+1. **Install dependencies**
+   ```bash
+   pip install -e .
+   ```
+2. **Configure environment**
+   ```bash
+   cp .env.example .env
+   ```
+   Then set:
+   - `GOOGLE_SERVICE_ACCOUNT_JSON_PATH` to your service-account JSON path.
+   - `GOOGLE_SHEETS_SPREADSHEET_ID` to your target sheet ID.
+3. **Initialize required tabs/headers in Google Sheets**
+   ```bash
+   python -m prospect_agent.main init-sheets
+   ```
+4. **Run a small smoke test**
+   ```bash
+   python -m prospect_agent.main run-daily --target 25
+   ```
+5. **Run full daily build**
+   ```bash
+   python -m prospect_agent.main run-daily --target 1000
+   ```
+6. **Schedule unattended runs at 7:00 AM ET**
+   ```bash
+   python -m prospect_agent.main schedule-daily
+   ```
+   This uses `RUN_TIME_LOCAL` and `RUN_TIMEZONE` from `.env`.
+
+### Expected output locations in Sheets
+- Core master tab: `Daily Call Lists`
+- Dated run tab (created per run date): `Daily Call List YYYY-MM-DD`
+- Other required tabs are initialized by `init-sheets`.
+
+### Operational notes
+- The system is configured for free-compatible operation by default (`FREE_MODE=true`).
+- If credentials are missing, storage falls back to in-memory behavior for local development.
+- Use `suppress` command to add phone/domain suppression records before future runs.
+
 ## Additional commands
 - `python -m prospect_agent.main discover --vertical climbing_gym --city Atlanta --state GA`
 - `python -m prospect_agent.main crawl --domain example.com`
