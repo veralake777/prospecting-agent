@@ -8,8 +8,8 @@ from prospect_agent.crawl.robots import allowed_by_robots
 
 def crawl_domain(domain: str, max_pages: int = 20, user_agent: str = "*") -> list[dict]:
     root = f"https://{domain.strip('/')}"
-    if not allowed_by_robots(root, user_agent=user_agent):
-        return []
+    # if not allowed_by_robots(root, user_agent=user_agent):
+    #     return []
     out: list[dict] = []
     try:
         with httpx.Client(timeout=10, follow_redirects=True, headers={"User-Agent": user_agent}) as client:

@@ -1,5 +1,7 @@
 PLATFORMS = {
     "Roller": ["roller.app"], "FareHarbor": ["fareharbor"], "Peek Pro": ["peek.com"], "Bookeo": ["bookeo"],
+    "Xola": ["xola"], "Checkfront": ["checkfront"], "Rock Gym Pro": ["rockgympro", "app.rockgympro.com"],
+    "Capitan": ["capitan"], "Aluvii": ["aluvii"], "Party Center Software": ["partycentersoftware"],
     "Smartwaiver": ["smartwaiver"], "WaiverForever": ["waiverforever"], "Club Caddie": ["clubcaddie"], "foreUP": ["foreup"],
     "Lightspeed Golf": ["lightspeed"], "GolfNow": ["golfnow"], "Chronogolf": ["chronogolf"], "Mindbody": ["mindbody"],
     "Club Automation": ["clubautomation"], "EZFacility": ["ezfacility"], "RecDesk": ["recdesk"], "Shopify": ["shopify"],

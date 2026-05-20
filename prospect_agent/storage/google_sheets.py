@@ -6,23 +6,29 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from google.auth.exceptions import GoogleAuthError
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from prospect_agent.config import Settings
 
 TAB_SCHEMAS = {
-    "Businesses": ["business_id","name","normalized_name","vertical","sub_vertical","vertical_confidence","website_url","domain","phone","phone_type","email","address","city","state","postal_code","country","latitude","longitude","google_place_id","source","source_id","source_url","google_rating","google_review_count","status","lead_score","lead_tier","first_seen_at","last_seen_at","last_enriched_at","last_called_at","do_not_call","opt_out_reason","compliance_notes","created_at","updated_at"],
-    "Websites": ["website_id","business_id","root_url","final_url","domain","http_status","title","meta_description","cms_detected","booking_platform","waiver_platform","pos_platform","ecommerce_platform","has_online_booking","has_parties","has_memberships","has_gift_cards","has_events","has_camps","has_leagues","has_waiver","has_email_signup","has_sms_mentions","has_multiple_locations","last_crawled_at","created_at","updated_at"],
+    "Businesses": ["business_id","name","normalized_name","vertical","sub_vertical","vertical_confidence","website_url","domain","phone","phone_type","email","address","city","state","postal_code","country","latitude","longitude","google_place_id","source","source_id","source_url","google_rating","google_review_count","status","lead_score","lead_tier","booking_url","booking_platform","evidence_url","social_url","social_platform","first_seen_at","last_seen_at","last_enriched_at","last_called_at","do_not_call","opt_out_reason","compliance_notes","created_at","updated_at"],
+    "Websites": ["website_id","business_id","root_url","final_url","domain","http_status","title","meta_description","cms_detected","booking_url","booking_platform","social_urls","waiver_platform","pos_platform","ecommerce_platform","has_online_booking","has_parties","has_memberships","has_gift_cards","has_events","has_camps","has_leagues","has_waiver","has_email_signup","has_sms_mentions","has_multiple_locations","last_crawled_at","created_at","updated_at"],
     "Pages": ["page_id","website_id","business_id","url","path","title","meta_description","http_status","content_hash","clean_text_excerpt","page_type","created_at","updated_at"],
     "Lead Signals": ["signal_id","business_id","signal_type","signal_value","confidence","evidence_url","evidence_text","created_at"],
     "Discovery Runs": ["run_id","run_date","status","target_count","discovered_count","net_new_count","qualified_count","exported_count","started_at","finished_at","error_message"],
     "Discovery Queries": ["query_id","run_id","source","query","vertical","city","state","status","results_count","created_at"],
-    "Daily Call Lists": ["list_id","run_id","list_date","rank","business_id","name","vertical","sub_vertical","phone","website_url","city","state","source_url","lead_score","lead_tier","reason","suggested_call_angle","compliance_notes","exported","created_at"],
+    "Daily Call Lists": ["list_id","run_id","list_date","rank","business_id","name","vertical","sub_vertical","phone","website_url","city","state","source_url","booking_url","booking_platform","evidence_url","social_url","social_platform","lead_score","lead_tier","reason","suggested_call_angle","compliance_notes","exported","created_at"],
     "Suppression List": ["suppression_id","phone","domain","business_name","reason","source","created_at"],
     "Crawl Errors": ["error_id","business_id","url","error_type","error_message","created_at"],
     "Settings": ["setting_key","setting_value","updated_at"],
 }
+
+
+class GoogleSheetsConfigurationError(RuntimeError):
+    """Raised when Google Sheets cannot be reached because setup is incomplete."""
 
 
 class StorageProvider(ABC):
@@ -63,6 +69,7 @@ class GoogleSheetsStorage(StorageProvider):
         self.settings = settings or Settings()
         self._tab_cache: dict[str, list[dict[str, Any]]] = {k: [] for k in TAB_SCHEMAS}
         self._sheets = None
+        self._service_account_email = ""
 
     def _sheet(self):
         if self._sheets is not None:
@@ -73,33 +80,110 @@ class GoogleSheetsStorage(StorageProvider):
             str(Path(self.settings.google_service_account_json_path)),
             scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"],
         )
+        self._service_account_email = creds.service_account_email
         self._sheets = build("sheets", "v4", credentials=creds).spreadsheets()
         return self._sheets
 
     def init_storage(self):
-        if not self._sheet():
-            return True
-        meta = self._sheet().get(spreadsheetId=self.settings.google_sheets_spreadsheet_id).execute()
-        existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-        requests = []
-        for tab, headers in TAB_SCHEMAS.items():
-            if tab not in existing:
-                requests.append({"addSheet": {"properties": {"title": tab}}})
-        if requests:
-            self._sheet().batchUpdate(
-                spreadsheetId=self.settings.google_sheets_spreadsheet_id,
-                body={"requests": requests},
-            ).execute()
-        for tab, headers in TAB_SCHEMAS.items():
-            vals = self._sheet().values().get(spreadsheetId=self.settings.google_sheets_spreadsheet_id, range=f"'{tab}'!1:1").execute().get("values", [])
-            if not vals:
-                self._sheet().values().update(
+        try:
+            sheet = self._sheet()
+            if not sheet:
+                return True
+            meta = sheet.get(spreadsheetId=self.settings.google_sheets_spreadsheet_id).execute()
+            existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+            requests = []
+            for tab, headers in TAB_SCHEMAS.items():
+                if tab not in existing:
+                    requests.append({"addSheet": {"properties": {"title": tab}}})
+            if requests:
+                sheet.batchUpdate(
                     spreadsheetId=self.settings.google_sheets_spreadsheet_id,
-                    range=f"'{tab}'!A1",
-                    valueInputOption="RAW",
-                    body={"values": [headers]},
+                    body={"requests": requests},
                 ).execute()
+            for tab, headers in TAB_SCHEMAS.items():
+                vals = sheet.values().get(spreadsheetId=self.settings.google_sheets_spreadsheet_id, range=f"'{tab}'!1:1").execute().get("values", [])
+                if not vals:
+                    sheet.values().update(
+                        spreadsheetId=self.settings.google_sheets_spreadsheet_id,
+                        range=f"'{tab}'!A1",
+                        valueInputOption="RAW",
+                        body={"values": [headers]},
+                    ).execute()
+                else:
+                    self._ensure_headers(tab, headers)
+        except HttpError as exc:
+            raise GoogleSheetsConfigurationError(self._format_http_error(exc)) from exc
+        except (OSError, ValueError, GoogleAuthError) as exc:
+            raise GoogleSheetsConfigurationError(
+                f"Could not initialize Google Sheets credentials from "
+                f"{self.settings.google_service_account_json_path!r}: {exc}"
+            ) from exc
         return True
+
+    def purge_placeholder_rows(self, apply: bool = False) -> dict[str, dict[str, int]]:
+        sheet = self._sheet()
+        if not sheet:
+            stats = {}
+            for tab, rows in self._tab_cache.items():
+                kept = [row for row in rows if not _is_placeholder_row(row)]
+                removed = len(rows) - len(kept)
+                if apply:
+                    self._tab_cache[tab] = kept
+                if removed:
+                    stats[tab] = {"removed": removed, "kept": len(kept)}
+            return stats
+
+        meta = sheet.get(spreadsheetId=self.settings.google_sheets_spreadsheet_id).execute()
+        titles = [s["properties"]["title"] for s in meta.get("sheets", [])]
+        target_tabs = [t for t in titles if t in {"Businesses", "Daily Call Lists"} or t.startswith("Daily Call List ")]
+        stats: dict[str, dict[str, int]] = {}
+
+        for tab in target_tabs:
+            values = sheet.values().get(
+                spreadsheetId=self.settings.google_sheets_spreadsheet_id,
+                range=f"'{tab}'!A:ZZ",
+            ).execute().get("values", [])
+            if not values:
+                continue
+            headers, data = values[0], values[1:]
+            rows = [{h: row[i] if i < len(row) else "" for i, h in enumerate(headers)} for row in data]
+            kept_rows = [row for row in rows if not _is_placeholder_row(row)]
+            removed = len(rows) - len(kept_rows)
+            if not removed:
+                continue
+            stats[tab] = {"removed": removed, "kept": len(kept_rows)}
+            if apply:
+                sheet.values().clear(
+                    spreadsheetId=self.settings.google_sheets_spreadsheet_id,
+                    range=f"'{tab}'!A2:ZZ",
+                    body={},
+                ).execute()
+                if kept_rows:
+                    sheet.values().update(
+                        spreadsheetId=self.settings.google_sheets_spreadsheet_id,
+                        range=f"'{tab}'!A2",
+                        valueInputOption="RAW",
+                        body={"values": [[row.get(h, "") for h in headers] for row in kept_rows]},
+                    ).execute()
+        return stats
+
+    def _format_http_error(self, exc: HttpError) -> str:
+        status = getattr(exc.resp, "status", None)
+        spreadsheet_id = self.settings.google_sheets_spreadsheet_id
+        account = self._service_account_email or "the configured service account"
+        if status == 403:
+            return (
+                f"Google Sheets rejected access to spreadsheet {spreadsheet_id!r} (403). "
+                f"Share the spreadsheet with {account} as an Editor, confirm this is the sheet ID "
+                "from the spreadsheet URL, then rerun `python -m prospect_agent.main init-sheets`."
+            )
+        if status == 404:
+            return (
+                f"Google Sheets could not find spreadsheet {spreadsheet_id!r} (404). "
+                "Check GOOGLE_SHEETS_SPREADSHEET_ID in .env and confirm the spreadsheet still exists."
+            )
+        detail = str(exc).replace("\n", " ")
+        return f"Google Sheets API request failed while initializing spreadsheet {spreadsheet_id!r}: {detail}"
 
     def _append(self, tab: str, rows: list[dict[str, Any]]):
         if not rows:
@@ -108,6 +192,7 @@ class GoogleSheetsStorage(StorageProvider):
         self._tab_cache.setdefault(tab, []).extend(rows)
         if not self._sheet():
             return
+        headers = self._ensure_headers(tab, headers)
         values = [[r.get(h, "") for h in headers] for r in rows]
         with_backoff(lambda: self._sheet().values().append(
             spreadsheetId=self.settings.google_sheets_spreadsheet_id,
@@ -127,6 +212,35 @@ class GoogleSheetsStorage(StorageProvider):
         rows = [{h: row[i] if i < len(row) else "" for i, h in enumerate(headers)} for row in data]
         self._tab_cache[tab] = rows
         return rows
+
+    def _ensure_headers(self, tab: str, expected_headers: list[str]) -> list[str]:
+        if not self._sheet():
+            return expected_headers
+        vals = self._sheet().values().get(
+            spreadsheetId=self.settings.google_sheets_spreadsheet_id,
+            range=f"'{tab}'!1:1",
+        ).execute().get("values", [])
+        existing_headers = vals[0] if vals else []
+        if not existing_headers:
+            self._sheet().values().update(
+                spreadsheetId=self.settings.google_sheets_spreadsheet_id,
+                range=f"'{tab}'!A1",
+                valueInputOption="RAW",
+                body={"values": [expected_headers]},
+            ).execute()
+            return expected_headers
+        merged_headers = list(existing_headers)
+        for header in expected_headers:
+            if header not in merged_headers:
+                merged_headers.append(header)
+        if merged_headers != existing_headers:
+            self._sheet().values().update(
+                spreadsheetId=self.settings.google_sheets_spreadsheet_id,
+                range=f"'{tab}'!A1",
+                valueInputOption="RAW",
+                body={"values": [merged_headers]},
+            ).execute()
+        return merged_headers
 
     def append_businesses(self, rows): self._append("Businesses", rows)
     def append_websites(self, rows): self._append("Websites", rows)
@@ -184,3 +298,22 @@ def with_backoff(func, retries: int = 4):
             if i == retries - 1:
                 raise
             time.sleep(2**i)
+
+
+def _is_placeholder_row(row: dict[str, Any]) -> bool:
+    text = " ".join(
+        str(row.get(field, ""))
+        for field in ("website_url", "domain", "source_url", "name")
+    ).lower()
+    return any(
+        marker in text
+        for marker in (
+            "example.com",
+            "example.org",
+            "example.net",
+            "examplecom",
+            "exampleorg",
+            "examplenet",
+            " directory listing",
+        )
+    )
