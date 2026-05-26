@@ -10,6 +10,7 @@ from uuid import uuid4
 from prospect_agent.classify.vertical_classifier import classify_vertical
 from prospect_agent.config import PRIORITY_MARKETS, Settings
 from prospect_agent.discovery.query_builder import VERTICALS, build_queries
+from prospect_agent.enrich.email_extractor import first_email
 from prospect_agent.enrich.lead_scorer import score_lead_detail
 from prospect_agent.enrich.platform_detector import detect_platforms
 from prospect_agent.enrich.signal_extractor import extract_signals
@@ -156,13 +157,18 @@ def _social_evidence(website: WebsiteIntel | None = None) -> dict:
     }
 
 
+def _email_evidence(candidate: dict, website: WebsiteIntel | None = None) -> str:
+    website = website or WebsiteIntel()
+    return first_email(candidate.get("email", ""), *website.emails)
+
+
 def _noop_progress(message: str) -> None:
     return None
 
 
 def _score_reason(row: dict) -> str:
     if row.get("sdr_discovery_required"):
-        return "Needs SDR discovery: no phone, website, or social profile found on public source."
+        return "Needs SDR discovery: no phone, email, website, or social profile found on public source."
     reasons = row.get("score_reasons") or []
     if not reasons:
         return "Qualified by vertical and contactability score"
@@ -171,11 +177,13 @@ def _score_reason(row: dict) -> str:
 
 def _suggested_call_angle(row: dict) -> str:
     if row.get("sdr_discovery_required"):
-        return "No public contact path found yet. SDR should research website, phone, or social before outreach."
+        return "No public contact path found yet. SDR should research website, phone, email, or social before outreach."
     if row.get("booking_platform"):
         return f"Booking evidence suggests {row['booking_platform']}. Review the booking link, then pitch lifecycle follow-up."
     if row.get("booking_url"):
         return "Booking page found. Review the linked page for integration clues, then pitch lifecycle follow-up."
+    if row.get("email"):
+        return f"Public email {row['email']} found. Use it as a backup contact path if phone outreach stalls."
     if row.get("social_url"):
         return f"{row['social_platform']} profile found. Use it as a backup contact path if phone outreach stalls."
     signals = row.get("signal_reasons") or []
@@ -184,11 +192,11 @@ def _suggested_call_angle(row: dict) -> str:
     return "Contactable public business. Verify booking, parties, memberships, waivers, and follow-up gaps before pitching."
 
 
-def _requires_sdr_discovery(candidate: dict, social: dict) -> bool:
+def _requires_sdr_discovery(candidate: dict, social: dict, email: str = "") -> bool:
     return not any(
         (
             candidate.get("phone"),
-            candidate.get("email"),
+            email,
             is_direct_business_url(candidate.get("website_url", "")),
             social.get("social_url"),
         )
@@ -229,6 +237,7 @@ def run_daily(
     progress: Callable[[str], None] | None = None,
     recent_days: int | None = None,
     include_recent: bool = False,
+    target_contactable: bool = False,
 ) -> dict:
     storage = storage or GoogleSheetsStorage()
     settings = storage.settings if hasattr(storage, "settings") else Settings()
@@ -258,6 +267,7 @@ def run_daily(
     websites_crawled = 0
     leads, new_business_rows, website_rows, page_rows, lead_signal_rows, queries = [], [], [], [], [], []
     selected_business_ids = set()
+    contactable_leads = 0
     attempted_queries = 0
     stopped_reason = ""
     skipped_recent = 0
@@ -273,6 +283,9 @@ def run_daily(
     markets_attempted: set[str] = set()
     discovery_seed = settings.discovery_seed or today
 
+    def target_reached() -> bool:
+        return (contactable_leads if target_contactable else len(leads)) >= target
+
     for state, city, vertical, query in _discovery_plan(settings, today):
         if attempted_queries >= max_queries:
             stopped_reason = f"Reached discovery query budget ({max_queries}) before target ({target})"
@@ -282,7 +295,8 @@ def run_daily(
         if attempted_queries == 1 or attempted_queries % progress_interval == 0:
             progress(
                 f"discovery query {attempted_queries}/{max_queries}: {city}, {state} {vertical}; "
-                f"qualified={len(leads)}/{target}; raw={candidates_seen}; scored={scored_candidates}; recent={skipped_recent}"
+                f"qualified={len(leads)}/{target}; contactable={contactable_leads}/{target}; "
+                f"raw={candidates_seen}; scored={scored_candidates}; recent={skipped_recent}"
             )
         query_result_count = 0
         for src, provider in (("search", search), ("places", places), ("directory", directory)):
@@ -316,7 +330,8 @@ def run_daily(
                 sig = extract_signals(txt)
                 evidence = _booking_evidence(cand, cc_intel, site_intel)
                 social = _social_evidence(site_intel)
-                sdr_discovery_required = _requires_sdr_discovery(cand, social)
+                email = _email_evidence(cand, site_intel)
+                sdr_discovery_required = _requires_sdr_discovery(cand, social, email)
                 plats = detect_platforms(f"{txt} {evidence['booking_platform']}")
                 phone_norm = "".join(ch for ch in str(cand.get("phone", "")) if ch.isdigit())
                 score_detail = score_lead_detail(
@@ -327,6 +342,7 @@ def run_daily(
                         "has_known_platform": bool(plats),
                         "direct_business_website": is_direct_business_url(cand.get("website_url", "")),
                         "has_phone": bool(phone_norm),
+                        "has_email": bool(email),
                         "has_social_contact": bool(social["social_links"]),
                         "source_verified": src == "places",
                         "common_crawl_multi_location": cc_intel.has_multi_location_signal,
@@ -369,6 +385,7 @@ def run_daily(
                     "website_url": cand.get("website_url", ""),
                     "domain": domain,
                     "phone": cand.get("phone", ""),
+                    "email": email,
                     "address": cand.get("address", ""),
                     "city": cand.get("city") or city,
                     "state": cand.get("state") or state,
@@ -400,6 +417,8 @@ def run_daily(
                 by_keys[key] = row
                 selected_business_ids.add(business_id)
                 leads.append(row)
+                if not sdr_discovery_required:
+                    contactable_leads += 1
                 if is_new_business:
                     new_business_rows.append(row)
                 if site_intel.root_url:
@@ -477,12 +496,12 @@ def run_daily(
                         "evidence_text": f"{link['platform']} profile discovered from homepage crawl",
                         "created_at": now,
                     })
-                if len(leads) >= target:
+                if target_reached():
                     break
-            if len(leads) >= target:
+            if target_reached():
                 break
         queries.append({"query_id": str(uuid4()), "run_id": run_id, "source": "free", "query": query, "vertical": vertical, "city": city, "state": state, "status": "ok", "results_count": query_result_count, "created_at": now})
-        if len(leads) >= target:
+        if target_reached():
             break
     if len(leads) == 0:
         reason = _zero_result_reason(
@@ -496,7 +515,7 @@ def run_daily(
             recent_days,
         )
         stopped_reason = f"{reason} {stopped_reason}".strip() if stopped_reason else reason
-    elif not stopped_reason and attempted_queries >= max_queries and len(leads) < target:
+    elif not stopped_reason and attempted_queries >= max_queries and not target_reached():
         stopped_reason = f"Reached discovery query budget ({max_queries}) before target ({target})"
 
     storage.append_discovery_queries(queries)
@@ -515,6 +534,7 @@ def run_daily(
             "vertical": b["vertical"],
             "sub_vertical": b["sub_vertical"],
             "phone": b["phone"],
+            "email": b["email"],
             "website_url": b["website_url"],
             "city": b["city"],
             "state": b["state"],
@@ -536,10 +556,12 @@ def run_daily(
     ]
     storage.append_daily_call_list(call_rows)
     storage.update_discovery_run(run_id, {"status": "completed", "discovered_count": len(leads), "net_new_count": len(new_business_rows), "qualified_count": len(leads), "exported_count": len(leads), "finished_at": now, "error_message": stopped_reason})
-    progress(f"discovery complete: qualified={len(leads)}/{target}, queries={attempted_queries}/{max_queries}, skipped_recent={skipped_recent}")
+    progress(f"discovery complete: qualified={len(leads)}, contactable={contactable_leads}/{target}, queries={attempted_queries}/{max_queries}, skipped_recent={skipped_recent}")
     return {
         "run_id": run_id,
         "qualified": len(leads),
+        "contactable_qualified": contactable_leads,
+        "target_mode": "contactable" if target_contactable else "total",
         "new_businesses": len(new_business_rows),
         "matched_existing": matched_existing,
         "skipped_recent": skipped_recent,

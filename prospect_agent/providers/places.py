@@ -4,6 +4,7 @@ import httpx
 
 from prospect_agent.config import PRIORITY_MARKETS
 from prospect_agent.config import Settings
+from prospect_agent.enrich.email_extractor import first_email
 from prospect_agent.providers.search import is_direct_business_url, normalize_url
 
 
@@ -86,19 +87,70 @@ CITY_COORDS = {
 }
 
 OSM_SELECTORS = {
-    "amusement": [(("tourism", "theme_park"),), (("leisure", "trampoline_park"),), (("leisure", "miniature_golf"),), (("leisure", "water_park"),)],
-    "arcade": [(("leisure", "amusement_arcade"),), (("amenity", "amusement_arcade"),)],
-    "attractions": [(("tourism", "theme_park"),), (("leisure", "trampoline_park"),), (("leisure", "miniature_golf"),), (("leisure", "water_park"),), (("sport", "climbing"),), (("leisure", "golf_course"),)],
-    "climbing": [(("sport", "climbing"),), (("leisure", "sports_centre"), ("sport", "climbing"))],
-    "family": [(("leisure", "trampoline_park"),), (("leisure", "miniature_golf"),), (("leisure", "water_park"),), (("leisure", "amusement_arcade"),), (("amenity", "amusement_arcade"),), (("tourism", "theme_park"),), (("leisure", "bowling_alley"),), (("leisure", "escape_game"),)],
-    "go kart": [(("sport", "karting"),), (("leisure", "track"), ("sport", "karting"))],
-    "golf": [(("leisure", "golf_course"),)],
-    "golf simulator": [(("sport", "golf"),), (("leisure", "sports_centre"), ("sport", "golf"))],
-    "indoor recreation": [(("leisure", "trampoline_park"),), (("sport", "climbing"),), (("leisure", "sports_centre"),), (("leisure", "amusement_arcade"),), (("amenity", "amusement_arcade"),), (("leisure", "bowling_alley"),), (("leisure", "escape_game"),)],
-    "laser tag": [(("sport", "laser_tag"),), (("leisure", "laser_tag"),)],
-    "mini golf": [(("leisure", "miniature_golf"),)],
-    "trampoline": [(("leisure", "trampoline_park"),)],
-    "water park": [(("leisure", "water_park"),)],
+    "amusement": [
+        (("tourism", "theme_park"),), 
+        (("leisure", "trampoline_park"),), 
+        (("leisure", "miniature_golf"),), 
+        (("leisure", "water_park"),)
+        ],
+    "arcade": [
+        (("leisure", "amusement_arcade"),), 
+        (("amenity", "amusement_arcade"),)
+        ],
+    "attractions": [
+        (("tourism", "theme_park"),), 
+        (("leisure", "trampoline_park"),),
+        (("leisure", "miniature_golf"),),
+        (("leisure", "water_park"),),
+        (("sport", "climbing"),),
+        (("leisure", "golf_course"),)
+        ],
+    "climbing": [
+        (("sport", "climbing"),), 
+        (("leisure", "sports_centre"), ("sport", "climbing"))
+        ],
+    "family": [
+        (("leisure", "trampoline_park"),),
+        (("leisure", "miniature_golf"),),
+        (("leisure", "water_park"),),
+        (("leisure", "amusement_arcade"),),
+        (("amenity", "amusement_arcade"),),
+        (("tourism", "theme_park"),),
+        (("leisure", "bowling_alley"),),
+        (("leisure", "escape_game"),)
+        ],
+    "go kart": [
+        (("sport", "karting"),),
+        (("leisure", "track"), ("sport", "karting"))
+        ],
+    "golf": [
+        (("leisure", "golf_course"),)
+        ],
+    "golf simulator": [
+        (("sport", "golf"),),
+        (("leisure", "sports_centre"), ("sport", "golf"))
+        ],
+    "indoor recreation": [
+        (("leisure", "trampoline_park"),),
+        (("sport", "climbing"),),
+        (("leisure", "sports_centre"),),
+        (("leisure", "amusement_arcade"),),
+        (("amenity", "amusement_arcade"),),
+        (("leisure", "bowling_alley"),),
+        (("leisure", "escape_game"),)
+        ],
+    "laser tag": [
+        (("sport", "laser_tag"),), (("leisure", "laser_tag"),)
+        ],
+    "mini golf": [
+        (("leisure", "miniature_golf"),)
+        ],
+    "trampoline": [
+        (("leisure", "trampoline_park"),)
+        ],
+    "water park": [
+        (("leisure", "water_park"),)
+        ],
 }
 
 
@@ -176,6 +228,7 @@ class PlacesProvider:
             seen_ids.add(source_id)
             website = normalize_url(tags.get("website") or tags.get("contact:website") or tags.get("url") or "")
             phone = tags.get("phone") or tags.get("contact:phone") or ""
+            email = first_email(tags.get("email", ""), tags.get("contact:email", ""))
             if website and not is_direct_business_url(website):
                 website = ""
             center = element.get("center") or {}
@@ -185,6 +238,7 @@ class PlacesProvider:
                     "website_url": website,
                     "source_url": f"https://www.openstreetmap.org/{element.get('type')}/{element.get('id')}",
                     "phone": phone,
+                    "email": email,
                     "address": self._format_osm_address(tags),
                     "city": city,
                     "state": state,
@@ -218,6 +272,7 @@ class PlacesProvider:
             tags = item.get("extratags") or {}
             website = normalize_url(tags.get("website") or tags.get("contact:website") or tags.get("url") or "")
             phone = tags.get("phone") or tags.get("contact:phone") or ""
+            email = first_email(tags.get("email", ""), tags.get("contact:email", ""))
             if website and not is_direct_business_url(website):
                 website = ""
             osm_type = {"N": "node", "W": "way", "R": "relation"}.get(str(item.get("osm_type", "")).upper(), "node")
@@ -228,6 +283,7 @@ class PlacesProvider:
                     "website_url": website,
                     "source_url": f"https://www.openstreetmap.org/{osm_type}/{osm_id}" if osm_id else "",
                     "phone": phone,
+                    "email": email,
                     "address": address.get("road", ""),
                     "city": address.get("city") or address.get("town") or address.get("village") or "",
                     "state": address.get("state", ""),
@@ -344,6 +400,7 @@ class PlacesProvider:
             "website_url": website,
             "source_url": detail.get("googleMapsUri") or place.get("googleMapsUri", ""),
             "phone": detail.get("nationalPhoneNumber") or detail.get("internationalPhoneNumber") or "",
+            "email": "",
             "address": place.get("formattedAddress", ""),
             "city": city,
             "state": state,

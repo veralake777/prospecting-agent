@@ -37,6 +37,8 @@ def score_lead_detail(signals: dict, meta: dict) -> LeadScore:
         add(15, "direct business website")
     if meta.get("has_phone"):
         add(15, "public phone")
+    if meta.get("has_email"):
+        add(10, "public email")
     if meta.get("has_social_contact"):
         add(5, "social contact link")
     if meta.get("source_verified"):

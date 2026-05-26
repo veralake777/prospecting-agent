@@ -57,6 +57,8 @@ def _format_run_daily_result(result: dict) -> str:
         "",
         "Leads",
         f"- Qualified for call list: {result.get('qualified', 0)}",
+        f"- Contactable qualified: {result.get('contactable_qualified', 0)}",
+        f"- Target mode: {result.get('target_mode', 'total')}",
         f"- New businesses added: {result.get('new_businesses', 0)}",
         f"- Existing businesses matched: {result.get('matched_existing', 0)}",
         f"- Skipped by {result.get('recent_days', 0)}-day cooldown: {result.get('skipped_recent', 0)}",
@@ -102,6 +104,7 @@ def cli():
     d.add_argument("--timeout", type=float)
     d.add_argument("--recent-days", type=int)
     d.add_argument("--include-recent", action="store_true")
+    d.add_argument("--target-contactable", action="store_true", help="Treat --target as the desired count of rows with a phone, email, website, or social link; include research rows in addition.")
     d.add_argument("--no-progress", action="store_true")
     d.add_argument("--json", action="store_true", help="Print raw JSON output instead of the human-readable summary.")
     sub.add_parser("schedule-daily")
@@ -144,7 +147,14 @@ def cli():
             if a.timeout is not None:
                 settings.discovery_http_timeout_seconds = a.timeout
             progress = None if a.no_progress else lambda message: print(message, file=sys.stderr, flush=True)
-            result = run_daily(a.target, storage, progress=progress, recent_days=a.recent_days, include_recent=a.include_recent)
+            result = run_daily(
+                a.target,
+                storage,
+                progress=progress,
+                recent_days=a.recent_days,
+                include_recent=a.include_recent,
+                target_contactable=a.target_contactable,
+            )
             print(json.dumps(result, indent=2) if a.json else _format_run_daily_result(result))
         elif a.cmd == "schedule-daily":
             _schedule_daily()

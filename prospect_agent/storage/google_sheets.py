@@ -20,7 +20,7 @@ TAB_SCHEMAS = {
     "Lead Signals": ["signal_id","business_id","signal_type","signal_value","confidence","evidence_url","evidence_text","created_at"],
     "Discovery Runs": ["run_id","run_date","status","target_count","discovered_count","net_new_count","qualified_count","exported_count","started_at","finished_at","error_message"],
     "Discovery Queries": ["query_id","run_id","source","query","vertical","city","state","status","results_count","created_at"],
-    "Daily Call Lists": ["list_id","run_id","list_date","rank","business_id","name","vertical","sub_vertical","phone","website_url","city","state","source_url","booking_url","booking_platform","evidence_url","social_url","social_platform","lead_score","lead_tier","reason","suggested_call_angle","compliance_notes","exported","created_at"],
+    "Daily Call Lists": ["list_id","run_id","list_date","rank","business_id","name","vertical","sub_vertical","phone","email","website_url","city","state","source_url","booking_url","booking_platform","evidence_url","social_url","social_platform","lead_score","lead_tier","reason","suggested_call_angle","compliance_notes","exported","created_at"],
     "Suppression List": ["suppression_id","phone","domain","business_name","reason","source","created_at"],
     "Crawl Errors": ["error_id","business_id","url","error_type","error_message","created_at"],
     "Settings": ["setting_key","setting_value","updated_at"],

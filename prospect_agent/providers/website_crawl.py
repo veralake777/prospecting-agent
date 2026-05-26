@@ -7,6 +7,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from prospect_agent.config import Settings
+from prospect_agent.enrich.email_extractor import extract_emails
 from prospect_agent.enrich.platform_detector import detect_platforms
 from prospect_agent.enrich.signal_extractor import extract_signals
 from prospect_agent.providers.common_crawl import BOOKING_URL_TERMS
@@ -36,6 +37,7 @@ class WebsiteIntel:
     text_excerpt: str = ""
     booking_urls: list[str] = field(default_factory=list)
     social_links: list[dict[str, str]] = field(default_factory=list)
+    emails: list[str] = field(default_factory=list)
     platforms: list[str] = field(default_factory=list)
 
     def text(self) -> str:
@@ -45,6 +47,7 @@ class WebsiteIntel:
                 self.title,
                 self.meta_description,
                 self.text_excerpt,
+                " ".join(self.emails),
                 " ".join(self.booking_urls),
                 " ".join(link.get("url", "") for link in self.social_links),
                 " ".join(self.platforms),
@@ -88,6 +91,7 @@ class WebsiteCrawler:
         text_excerpt = soup.get_text(" ", strip=True)[:5000]
         booking_urls = self._extract_booking_urls(soup, final_url)
         social_links = self._extract_social_links(soup, final_url)
+        emails = self._extract_email_addresses(soup)
         platform_hits = detect_platforms(" ".join([html[:250_000], *booking_urls]))
         platforms = _unique(hit["platform"] for hit in platform_hits)
         return WebsiteIntel(
@@ -99,6 +103,7 @@ class WebsiteCrawler:
             text_excerpt=text_excerpt,
             booking_urls=booking_urls,
             social_links=social_links,
+            emails=emails,
             platforms=platforms,
         )
 
@@ -133,6 +138,17 @@ class WebsiteCrawler:
             if link not in links:
                 links.append(link)
         return sorted(links, key=lambda item: SOCIAL_PRIORITY.index(item["platform"]) if item["platform"] in SOCIAL_PRIORITY else 99)
+
+    def _extract_email_addresses(self, soup: BeautifulSoup) -> list[str]:
+        values = []
+        for element in soup.select("a[href]"):
+            href = element.get("href") or ""
+            if href.lower().strip().startswith("mailto:"):
+                values.append(href)
+        for element in soup.select('meta[content], script[type="application/ld+json"]'):
+            values.append(element.get("content") or element.get_text(" ", strip=True))
+        values.append(soup.get_text(" ", strip=True))
+        return extract_emails(values)
 
 
 def _clean_link(raw_url: str, base_url: str) -> str:

@@ -19,6 +19,7 @@ class Business(BaseModel):
     website_url: str = ""
     domain: str = ""
     phone: str = ""
+    email: str = ""
     city: str = ""
     state: str = ""
     google_place_id: str = ""

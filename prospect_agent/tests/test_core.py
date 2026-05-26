@@ -114,6 +114,8 @@ def test_website_crawl_extracts_booking_links_and_platforms():
             <a href="/birthday-parties/book-now">Book a party</a>
             <a href="https://fareharbor.com/embeds/book/familyfun/items/">Reserve tickets</a>
             <form action="https://waiver.smartwaiver.com/w/familyfun"></form>
+            <a href="mailto:events@familyfun.examplebiz.com?subject=Party">Email events</a>
+            <p>Questions? info@familyfun.examplebiz.com.</p>
             <a href="https://www.facebook.com/familyfun">Facebook</a>
             <a href="https://www.instagram.com/familyfun/">Instagram</a>
             <a href="https://www.facebook.com/sharer/sharer.php?u=https://familyfun.examplebiz.com">Share</a>
@@ -127,6 +129,7 @@ def test_website_crawl_extracts_booking_links_and_platforms():
     assert "https://waiver.smartwaiver.com/w/familyfun" in intel.booking_urls
     assert "FareHarbor" in intel.platforms
     assert "Smartwaiver" in intel.platforms
+    assert intel.emails == ["events@familyfun.examplebiz.com", "info@familyfun.examplebiz.com"]
     assert intel.social_links == [
         {"platform": "Facebook", "url": "https://www.facebook.com/familyfun"},
         {"platform": "Instagram", "url": "https://www.instagram.com/familyfun/"},
@@ -147,6 +150,7 @@ def test_overpass_candidates_keep_real_place_contact_data():
                     "leisure": "trampoline_park",
                     "website": "www.atlantafamilyfun.examplebiz.com",
                     "phone": "+1-404-555-1212",
+                    "contact:email": "info@atlantafamilyfun.examplebiz.com",
                     "addr:housenumber": "123",
                     "addr:street": "Main Street",
                 },
@@ -158,6 +162,7 @@ def test_overpass_candidates_keep_real_place_contact_data():
 
     assert rows[0]["website_url"] == "https://www.atlantafamilyfun.examplebiz.com"
     assert rows[0]["phone"] == "+1-404-555-1212"
+    assert rows[0]["email"] == "info@atlantafamilyfun.examplebiz.com"
     assert rows[0]["source_id"] == "osm:node:123"
 
 
@@ -188,6 +193,7 @@ def test_overpass_keeps_place_candidates_without_contact_for_diagnostics():
     assert rows[0]["name"] == "Sparse Laser Tag"
     assert rows[0]["website_url"] == ""
     assert rows[0]["phone"] == ""
+    assert rows[0]["email"] == ""
 
 
 def test_google_places_new_candidate_mapping_and_cost_caps():
@@ -213,6 +219,7 @@ def test_google_places_new_candidate_mapping_and_cost_caps():
     assert row["name"] == "Atlanta Family Fun Center"
     assert row["website_url"] == "https://atlantafamilyfun.examplebiz.com"
     assert row["phone"] == "(404) 555-1212"
+    assert row["email"] == ""
     assert row["google_place_id"] == "places/google-123"
     assert row["google_rating"] == 4.7
     assert row["google_review_count"] == 123
@@ -389,6 +396,103 @@ def test_run_daily_lists_verified_place_candidates_for_sdr_research(monkeypatch)
     assert "SDR should research" in call_row["suggested_call_angle"]
 
 
+def test_run_daily_can_target_contactable_leads_plus_research(monkeypatch):
+    calls = {"count": 0}
+
+    def mixed_places(self, query):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return [
+                {
+                    "name": "Sparse Laser Tag",
+                    "website_url": "",
+                    "source_url": "https://www.openstreetmap.org/node/456",
+                    "phone": "",
+                    "source_id": "osm:node:456",
+                    "category": "laser tag",
+                }
+            ]
+        return [
+            {
+                "name": "Contactable Laser Tag",
+                "website_url": "https://contactablelasertag.examplebiz.com",
+                "source_url": "https://www.openstreetmap.org/node/789",
+                "phone": "(404) 555-1212",
+                "source_id": "osm:node:789",
+                "category": "laser tag",
+            }
+        ]
+
+    monkeypatch.setattr(SearchProvider, "search", lambda self, query: [])
+    monkeypatch.setattr(PlacesProvider, "search", mixed_places)
+    monkeypatch.setattr(DirectoryProvider, "search", lambda self, query: [])
+
+    settings = Settings(
+        google_service_account_json_path="",
+        google_sheets_spreadsheet_id="",
+        search_provider="duckduckgo",
+        places_provider="osm",
+        max_discovery_queries_per_run=2,
+        queries_per_vertical=2,
+        shuffle_discovery_order=False,
+        use_common_crawl=False,
+        max_crawl_pages_per_domain=0,
+    )
+    storage = GoogleSheetsStorage(settings=settings)
+
+    result = run_daily(1, storage, target_contactable=True)
+
+    assert result["qualified"] == 2
+    assert result["contactable_qualified"] == 1
+    assert result["target_mode"] == "contactable"
+    assert result["research_candidates"] == 1
+    call_rows = storage._tab_cache["Daily Call Lists"]
+    assert call_rows[0]["lead_tier"] == "research"
+    assert call_rows[1]["phone"] == "(404) 555-1212"
+
+
+def test_run_daily_treats_email_only_place_as_contactable(monkeypatch):
+    def email_place(self, query):
+        return [
+            {
+                "name": "Email Laser Tag",
+                "website_url": "",
+                "source_url": "https://www.openstreetmap.org/node/987",
+                "phone": "",
+                "email": "events@emaillasertag.examplebiz.com",
+                "source_id": "osm:node:987",
+                "category": "laser tag",
+            }
+        ]
+
+    monkeypatch.setattr(SearchProvider, "search", lambda self, query: [])
+    monkeypatch.setattr(PlacesProvider, "search", email_place)
+    monkeypatch.setattr(DirectoryProvider, "search", lambda self, query: [])
+
+    settings = Settings(
+        google_service_account_json_path="",
+        google_sheets_spreadsheet_id="",
+        search_provider="duckduckgo",
+        places_provider="osm",
+        max_discovery_queries_per_run=1,
+        shuffle_discovery_order=False,
+        use_common_crawl=False,
+        max_crawl_pages_per_domain=0,
+    )
+    storage = GoogleSheetsStorage(settings=settings)
+
+    result = run_daily(1, storage, target_contactable=True)
+
+    assert result["qualified"] == 1
+    assert result["contactable_qualified"] == 1
+    business = storage.get_existing_businesses()[0]
+    assert business["email"] == "events@emaillasertag.examplebiz.com"
+    assert business["status"] == ""
+    call_row = storage._tab_cache["Daily Call Lists"][0]
+    assert call_row["email"] == business["email"]
+    assert "Public email" in call_row["suggested_call_angle"]
+
+
 def test_run_daily_uses_common_crawl_domain_intelligence(monkeypatch):
     def real_candidate(self, query):
         return [
@@ -398,6 +502,7 @@ def test_run_daily_uses_common_crawl_domain_intelligence(monkeypatch):
                 "source_url": "https://atlantafamilyfun.examplebiz.com",
                 "phone": "(404) 555-1212",
                 "snippet": "",
+                "category": "laser tag",
             }
         ]
 
@@ -456,6 +561,7 @@ def test_run_daily_documents_homepage_booking_links(monkeypatch):
                 "source_url": "https://atlantafamilyfun.examplebiz.com",
                 "phone": "(404) 555-1212",
                 "snippet": "",
+                "category": "laser tag",
             }
         ]
 
@@ -471,6 +577,7 @@ def test_run_daily_documents_homepage_booking_links(monkeypatch):
                 "https://fareharbor.com/embeds/book/atlantafamilyfun/items/",
                 "https://waiver.smartwaiver.com/w/atlantafamilyfun",
             ],
+            emails=["events@atlantafamilyfun.examplebiz.com"],
             social_links=[
                 {"platform": "Facebook", "url": "https://www.facebook.com/atlantafamilyfun"},
                 {"platform": "Instagram", "url": "https://www.instagram.com/atlantafamilyfun/"},
@@ -500,8 +607,11 @@ def test_run_daily_documents_homepage_booking_links(monkeypatch):
     business = storage.get_existing_businesses()[0]
     assert business["booking_url"] == "https://fareharbor.com/embeds/book/atlantafamilyfun/items/"
     assert business["booking_platform"] == "FareHarbor, Smartwaiver"
+    assert business["email"] == "events@atlantafamilyfun.examplebiz.com"
     assert business["social_url"] == "https://www.facebook.com/atlantafamilyfun"
     assert business["social_platform"] == "Facebook"
+    call_row = storage._tab_cache["Daily Call Lists"][0]
+    assert call_row["email"] == business["email"]
     website_row = storage._tab_cache["Websites"][0]
     assert website_row["booking_url"] == business["booking_url"]
     assert website_row["booking_platform"] == business["booking_platform"]
@@ -524,6 +634,7 @@ def test_run_daily_skips_recent_call_list_matches_without_dup_businesses(monkeyp
                 "source_url": "https://atlantafamilyfun.examplebiz.com",
                 "phone": "(404) 555-1212",
                 "snippet": "Book online birthday parties and waivers.",
+                "category": "laser tag",
             }
         ]
 
